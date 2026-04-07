@@ -93,3 +93,68 @@ function calculateScore(
 
   return Math.round(Math.min(score, 100));
 }
+
+export interface BulkRescheduleResult {
+  absenceId: string;
+  studentId: string;
+  studentName: string;
+  success: boolean;
+  scheduleId?: string;
+  dayOfWeek?: number;
+  scheduleSummary?: string;
+  error?: string;
+}
+
+const DAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
+
+export async function bulkReschedule(
+  absences: AbsenceRecord[],
+): Promise<BulkRescheduleResult[]> {
+  const schedules = await listSchedules();
+  const allocatedSlots = new Map<string, number>();
+  const results: BulkRescheduleResult[] = [];
+
+  for (const absence of absences) {
+    const originalDayOfWeek = new Date(absence.originalDate).getDay();
+    const scored: { schedule: Schedule; score: number }[] = [];
+
+    for (const schedule of schedules) {
+      if (!schedule.isActive) continue;
+      const allocated = allocatedSlots.get(schedule.id) ?? 0;
+      const capacity = schedule.maxStudents - schedule.enrolledStudentIds.length - allocated;
+      if (capacity <= 0) continue;
+      if (schedule.gradeLevel !== absence.gradeLevel) continue;
+      if (schedule.enrolledStudentIds.includes(absence.studentId)) continue;
+      if (schedule.dayOfWeek === originalDayOfWeek) continue;
+
+      const score = calculateScore(schedule, absence, capacity);
+      scored.push({ schedule, score });
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    const best = scored[0];
+
+    if (best) {
+      allocatedSlots.set(best.schedule.id, (allocatedSlots.get(best.schedule.id) ?? 0) + 1);
+      const dayLabel = DAY_LABELS[best.schedule.dayOfWeek];
+      results.push({
+        absenceId: absence.id,
+        studentId: absence.studentId,
+        studentName: absence.studentName,
+        success: true,
+        scheduleId: best.schedule.id,
+        dayOfWeek: best.schedule.dayOfWeek,
+        scheduleSummary: `${dayLabel}曜 ${best.schedule.startTime}-${best.schedule.endTime} ${best.schedule.subject} ${best.schedule.room}`,
+      });
+    } else {
+      results.push({
+        absenceId: absence.id,
+        studentId: absence.studentId,
+        studentName: absence.studentName,
+        success: false,
+        error: "条件に合う振替先が見つかりませんでした",
+      });
+    }
+  }
+  return results;
+}

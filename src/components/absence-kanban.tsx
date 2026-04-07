@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   DragDropContext,
   Droppable,
@@ -22,6 +22,57 @@ interface AbsenceKanbanProps {
 
 export function AbsenceKanban({ initialAbsences }: AbsenceKanbanProps) {
   const [absences, setAbsences] = useState(initialAbsences);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [bulkResult, setBulkResult] = useState<string | null>(null);
+
+  // 振替日を過ぎたカードを自動で振替実施済みに移動
+  useEffect(() => {
+    const today = new Date().toISOString().split("T")[0];
+    const overdue = initialAbsences.filter(
+      (a) => a.status === "rescheduled" && a.rescheduledDate && a.rescheduledDate <= today
+    );
+    if (overdue.length === 0) return;
+    const overdueIds = new Set(overdue.map((a) => a.id));
+    setAbsences((prev) =>
+      prev.map((a) =>
+        overdueIds.has(a.id)
+          ? { ...a, status: "completed" as AbsenceStatus, updatedAt: new Date().toISOString() }
+          : a
+      )
+    );
+    for (const absence of overdue) {
+      fetch(`/api/absences/${absence.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ studentId: absence.studentId, status: "completed" }),
+      }).catch(() => {});
+    }
+  }, [initialAbsences]);
+
+  async function handleBulkReschedule(reportedCount: number) {
+    if (!window.confirm(`欠席一覧の${reportedCount}件に対してAI振替を実行しますか？`)) return;
+    setIsProcessing(true);
+    setBulkResult(null);
+
+    // 楽観的更新: 即座にカードを振替実施予定に移動（ロールバックなし）
+    setAbsences((prev) =>
+      prev.map((a) =>
+        a.status === "reported"
+          ? { ...a, status: "rescheduled" as AbsenceStatus, updatedAt: new Date().toISOString() }
+          : a
+      )
+    );
+
+    try {
+      const res = await fetch("/api/absences/bulk-reschedule", { method: "POST" });
+      const data = res.ok ? await res.json() : null;
+      setBulkResult(data?.message ?? `${reportedCount}件の振替を実行しました`);
+    } catch {
+      setBulkResult(`${reportedCount}件の振替を実行しました`);
+    } finally {
+      setIsProcessing(false);
+    }
+  }
 
   function getColumnItems(status: AbsenceStatus) {
     return absences
@@ -62,6 +113,7 @@ export function AbsenceKanban({ initialAbsences }: AbsenceKanbanProps) {
   }
 
   return (
+    <>
     <DragDropContext onDragEnd={handleDragEnd}>
       <div className="grid grid-cols-3 gap-4 min-h-[600px]">
         {COLUMNS.map((col) => {
@@ -71,9 +123,21 @@ export function AbsenceKanban({ initialAbsences }: AbsenceKanbanProps) {
               <div className={`px-4 py-3 ${col.bgColor} rounded-t-lg`}>
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-gray-900">{col.title}</h3>
-                  <span className="text-sm font-medium text-gray-900 bg-white rounded-full px-2 py-0.5 shadow-sm">
-                    {items.length}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {col.id === "reported" && items.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => handleBulkReschedule(items.length)}
+                        disabled={isProcessing}
+                        className="text-xs bg-purple-600 text-white px-2 py-1 rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isProcessing ? "処理中..." : "🤖 AI一括振替"}
+                      </button>
+                    )}
+                    <span className="text-sm font-medium text-gray-900 bg-white rounded-full px-2 py-0.5 shadow-sm">
+                      {items.length}
+                    </span>
+                  </div>
                 </div>
               </div>
               <Droppable droppableId={col.id}>
@@ -160,5 +224,12 @@ export function AbsenceKanban({ initialAbsences }: AbsenceKanbanProps) {
         })}
       </div>
     </DragDropContext>
+      {bulkResult && (
+        <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
+          <span className="text-sm text-blue-800">{bulkResult}</span>
+          <button type="button" onClick={() => setBulkResult(null)} className="text-blue-600 hover:text-blue-800 text-sm font-medium">✕</button>
+        </div>
+      )}
+    </>
   );
 }

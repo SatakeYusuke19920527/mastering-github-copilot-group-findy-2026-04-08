@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { Schedule, Room, PeriodDef, Student } from "@/lib/types";
+import type { Schedule, Room, PeriodDef, Student, AbsenceRecord } from "@/lib/types";
 import { DAY_OF_WEEK_LABELS, PERIODS } from "@/lib/types";
 
 const WEEKDAYS = [1, 2, 3, 4, 5, 6] as const;
@@ -10,6 +10,7 @@ const WEEKDAYS = [1, 2, 3, 4, 5, 6] as const;
 interface ScheduleTimetableProps {
   schedules: Schedule[];
   students?: Student[];
+  rescheduledAbsences?: AbsenceRecord[];
 }
 
 function getDefaultTime(p: PeriodDef, room: Room): { start: string; end: string } {
@@ -18,13 +19,24 @@ function getDefaultTime(p: PeriodDef, room: Room): { start: string; end: string 
     : { start: p.bStart, end: p.bEnd };
 }
 
-export function ScheduleTimetable({ schedules, students }: ScheduleTimetableProps) {
+export function ScheduleTimetable({ schedules, students, rescheduledAbsences }: ScheduleTimetableProps) {
   const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null);
 
   const studentMap = new Map<string, string>();
   if (students) {
     for (const s of students) {
       studentMap.set(s.id, `${s.lastName} ${s.firstName}`);
+    }
+  }
+
+  const rescheduleMap = new Map<string, string[]>();
+  if (rescheduledAbsences) {
+    for (const absence of rescheduledAbsences) {
+      if (absence.rescheduledScheduleId) {
+        const names = rescheduleMap.get(absence.rescheduledScheduleId) ?? [];
+        names.push(absence.studentName);
+        rescheduleMap.set(absence.rescheduledScheduleId, names);
+      }
     }
   }
 
@@ -75,6 +87,7 @@ export function ScheduleTimetable({ schedules, students }: ScheduleTimetableProp
               periodDef={p}
               find={find}
               studentMap={studentMap}
+              rescheduleMap={rescheduleMap}
               onSelect={setSelectedSchedule}
             />
           ))}
@@ -86,6 +99,7 @@ export function ScheduleTimetable({ schedules, students }: ScheduleTimetableProp
         <ScheduleDetailModal
           schedule={selectedSchedule}
           studentMap={studentMap}
+          rescheduleMap={rescheduleMap}
           onClose={() => setSelectedSchedule(null)}
         />
       )}
@@ -97,11 +111,13 @@ function PeriodRows({
   periodDef,
   find,
   studentMap,
+  rescheduleMap,
   onSelect,
 }: {
   periodDef: PeriodDef;
   find: (day: number, period: number, room: Room) => Schedule | undefined;
   studentMap: Map<string, string>;
+  rescheduleMap: Map<string, string[]>;
   onSelect: (s: Schedule) => void;
 }) {
   const rooms: { room: Room; bgClass: string; label: string }[] = [
@@ -147,6 +163,7 @@ function PeriodRows({
                     room={r.room}
                     periodDef={periodDef}
                     studentMap={studentMap}
+                    rescheduleMap={rescheduleMap}
                     onSelect={onSelect}
                   />
                 </td>
@@ -166,6 +183,7 @@ function ScheduleCell({
   room,
   periodDef,
   studentMap,
+  rescheduleMap,
   onSelect,
 }: {
   schedule: Schedule | undefined;
@@ -174,6 +192,7 @@ function ScheduleCell({
   room: Room;
   periodDef: PeriodDef;
   studentMap: Map<string, string>;
+  rescheduleMap: Map<string, string[]>;
   onSelect: (s: Schedule) => void;
 }) {
   if (!schedule) {
@@ -209,9 +228,14 @@ function ScheduleCell({
       <span className="text-[10px] text-gray-600 mt-0.5">
         {schedule.teacherName}
       </span>
-      <span className="text-[10px] text-gray-500">
-        ({schedule.enrolledStudentIds.length}/{schedule.maxStudents})
-      </span>
+      {(() => {
+        const rescheduleCount = rescheduleMap.get(schedule.id)?.length ?? 0;
+        return (
+          <span className="text-[10px] text-gray-500">
+            ({schedule.enrolledStudentIds.length}{rescheduleCount > 0 ? `+${rescheduleCount}` : ""}/{schedule.maxStudents})
+          </span>
+        );
+      })()}
       {studentMap.size > 0 && schedule.enrolledStudentIds.length > 0 && (() => {
         const names = schedule.enrolledStudentIds
           .map((id) => studentMap.get(id))
@@ -224,6 +248,12 @@ function ScheduleCell({
           </span>
         );
       })()}
+      {rescheduleMap.get(schedule.id)?.length ? (
+        <span className="text-[9px] text-purple-600 text-center leading-tight">
+          {rescheduleMap.get(schedule.id)!.slice(0, 2).map(n => `${n}(振替)`).join("、")}
+          {(rescheduleMap.get(schedule.id)!.length > 2) && ` 他${rescheduleMap.get(schedule.id)!.length - 2}名`}
+        </span>
+      ) : null}
       {hasCustomTime && (
         <span className="text-[10px] text-gray-500">
           {schedule.startTime}–{schedule.endTime}
@@ -236,10 +266,12 @@ function ScheduleCell({
 function ScheduleDetailModal({
   schedule,
   studentMap,
+  rescheduleMap,
   onClose,
 }: {
   schedule: Schedule;
   studentMap: Map<string, string>;
+  rescheduleMap: Map<string, string[]>;
   onClose: () => void;
 }) {
   const enrolledNames = schedule.enrolledStudentIds
@@ -283,6 +315,23 @@ function ScheduleDetailModal({
               ))}
             </ul>
           )}
+          {rescheduleMap.get(schedule.id)?.length ? (
+            <>
+              <h4 className="text-sm font-semibold text-purple-700 mb-2 mt-4">
+                振替生徒（{rescheduleMap.get(schedule.id)!.length}名）
+              </h4>
+              <ul className="space-y-1">
+                {rescheduleMap.get(schedule.id)!.map((name, i) => (
+                  <li key={`r-${i}`} className="text-sm text-purple-700 flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-full bg-purple-100 text-purple-700 text-xs flex items-center justify-center font-medium">
+                      振
+                    </span>
+                    {name}(振替)
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
         </div>
 
         <div className="border-t border-gray-200 px-5 py-3 flex justify-between">
