@@ -450,17 +450,40 @@ async function seed() {
   }
   console.log(`  ✅ ${studentData.length}名の生徒を登録`);
 
+  // 学年別の在籍生徒IDマップを構築
+  const enrolledByGrade = new Map<string, string[]>();
+  for (const s of studentData) {
+    if (s.enrollmentStatus !== "enrolled") continue;
+    const gl = s.gradeLevel as string;
+    if (!enrolledByGrade.has(gl)) enrolledByGrade.set(gl, []);
+    enrolledByGrade.get(gl)!.push(s.id as string);
+  }
+
   // --- スケジュールデータ ---
   console.log("📅 授業スケジュールを投入中...");
   const schedules = database.container("schedules");
   const teachers = ["佐竹先生", "坂本先生", "浅野先生", "芝先生", "岡本先生"];
   let teacherIdx = 0;
   function nextTeacher() { const t = teachers[teacherIdx % teachers.length]; teacherIdx++; return t; }
-  function mockStudents(count: number) { return Array.from({ length: count }, (_, i) => `mock-student-${teacherIdx}-${i}`); }
+
+  // 学年プール内のインデックスを保持してラウンドロビンで割り当て
+  const gradeIndexes = new Map<string, number>();
+  function pickStudents(gradeLevel: string, count: number): string[] {
+    const pool = enrolledByGrade.get(gradeLevel) ?? [];
+    if (pool.length === 0) return [];
+    let idx = gradeIndexes.get(gradeLevel) ?? 0;
+    const result: string[] = [];
+    for (let i = 0; i < Math.min(count, pool.length); i++) {
+      result.push(pool[idx % pool.length]);
+      idx++;
+    }
+    gradeIndexes.set(gradeLevel, idx);
+    return result;
+  }
 
   function sched(dayOfWeek: number, period: number, startTime: string, endTime: string, label: string, subject: string, gradeLevel: string, room: string, isSpringCourse = false, isImportant = false, enrolled = 0) {
     const teacher = nextTeacher();
-    return { id: uuidv4(), dayOfWeek, period, startTime, endTime, label, subject, gradeLevel, teacherName: teacher, room, maxStudents: 8, enrolledStudentIds: mockStudents(enrolled), isActive: true, isSpringCourse, isImportant, createdAt: now, updatedAt: now };
+    return { id: uuidv4(), dayOfWeek, period, startTime, endTime, label, subject, gradeLevel, teacherName: teacher, room, maxStudents: 8, enrolledStudentIds: pickStudents(gradeLevel, enrolled), isActive: true, isSpringCourse, isImportant, createdAt: now, updatedAt: now };
   }
 
   const scheduleData = [

@@ -1,13 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import type { Schedule, Room, PeriodDef } from "@/lib/types";
-import { DAY_OF_WEEK_LABELS, ROOMS, PERIODS } from "@/lib/types";
+import type { Schedule, Room, PeriodDef, Student } from "@/lib/types";
+import { DAY_OF_WEEK_LABELS, PERIODS } from "@/lib/types";
 
 const WEEKDAYS = [1, 2, 3, 4, 5, 6] as const;
 
 interface ScheduleTimetableProps {
   schedules: Schedule[];
+  students?: Student[];
 }
 
 function getDefaultTime(p: PeriodDef, room: Room): { start: string; end: string } {
@@ -16,7 +18,16 @@ function getDefaultTime(p: PeriodDef, room: Room): { start: string; end: string 
     : { start: p.bStart, end: p.bEnd };
 }
 
-export function ScheduleTimetable({ schedules }: ScheduleTimetableProps) {
+export function ScheduleTimetable({ schedules, students }: ScheduleTimetableProps) {
+  const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null);
+
+  const studentMap = new Map<string, string>();
+  if (students) {
+    for (const s of students) {
+      studentMap.set(s.id, `${s.lastName} ${s.firstName}`);
+    }
+  }
+
   // Build lookup: key = "dayOfWeek-period-room"
   const lookup = new Map<string, Schedule>();
   for (const s of schedules) {
@@ -59,10 +70,25 @@ export function ScheduleTimetable({ schedules }: ScheduleTimetableProps) {
         </thead>
         <tbody>
           {PERIODS.map((p) => (
-            <PeriodRows key={p.period} periodDef={p} find={find} />
+            <PeriodRows
+              key={p.period}
+              periodDef={p}
+              find={find}
+              studentMap={studentMap}
+              onSelect={setSelectedSchedule}
+            />
           ))}
         </tbody>
       </table>
+
+      {/* Detail modal */}
+      {selectedSchedule && (
+        <ScheduleDetailModal
+          schedule={selectedSchedule}
+          studentMap={studentMap}
+          onClose={() => setSelectedSchedule(null)}
+        />
+      )}
     </div>
   );
 }
@@ -70,9 +96,13 @@ export function ScheduleTimetable({ schedules }: ScheduleTimetableProps) {
 function PeriodRows({
   periodDef,
   find,
+  studentMap,
+  onSelect,
 }: {
   periodDef: PeriodDef;
   find: (day: number, period: number, room: Room) => Schedule | undefined;
+  studentMap: Map<string, string>;
+  onSelect: (s: Schedule) => void;
 }) {
   const rooms: { room: Room; bgClass: string; label: string }[] = [
     { room: "A教室", bgClass: "bg-blue-50", label: "A" },
@@ -82,10 +112,8 @@ function PeriodRows({
   return (
     <>
       {rooms.map((r, idx) => {
-        const defaultTime = getDefaultTime(periodDef, r.room);
         return (
           <tr key={r.room} className={r.bgClass}>
-            {/* Period label cell — spans 2 rows, only rendered on first sub-row */}
             {idx === 0 && (
               <td
                 rowSpan={2}
@@ -105,7 +133,6 @@ function PeriodRows({
               </td>
             )}
 
-            {/* Day columns */}
             {WEEKDAYS.map((day) => {
               const schedule = find(day, periodDef.period, r.room);
               return (
@@ -119,6 +146,8 @@ function PeriodRows({
                     period={periodDef.period}
                     room={r.room}
                     periodDef={periodDef}
+                    studentMap={studentMap}
+                    onSelect={onSelect}
                   />
                 </td>
               );
@@ -136,12 +165,16 @@ function ScheduleCell({
   period,
   room,
   periodDef,
+  studentMap,
+  onSelect,
 }: {
   schedule: Schedule | undefined;
   day: number;
   period: number;
   room: Room;
   periodDef: PeriodDef;
+  studentMap: Map<string, string>;
+  onSelect: (s: Schedule) => void;
 }) {
   if (!schedule) {
     return (
@@ -158,12 +191,11 @@ function ScheduleCell({
   const hasCustomTime =
     schedule.startTime !== defaultTime.start || schedule.endTime !== defaultTime.end;
 
-  const labelText = schedule.label;
-
   return (
-    <Link
-      href={`/schedule/${schedule.id}/edit?dayOfWeek=${schedule.dayOfWeek}`}
-      className="flex flex-col items-center justify-center w-full h-full min-h-[3rem] px-1 py-1 border border-solid border-gray-400 hover:shadow-md transition-shadow"
+    <button
+      type="button"
+      onClick={() => onSelect(schedule)}
+      className="flex flex-col items-center justify-center w-full h-full min-h-[3rem] px-1 py-1 border border-solid border-gray-400 hover:shadow-md transition-shadow cursor-pointer bg-transparent"
     >
       <span
         className={`text-xs text-center leading-tight ${
@@ -172,7 +204,7 @@ function ScheduleCell({
             : "text-gray-900"
         }`}
       >
-        {labelText}
+        {schedule.label}
       </span>
       <span className="text-[10px] text-gray-600 mt-0.5">
         {schedule.teacherName}
@@ -180,11 +212,95 @@ function ScheduleCell({
       <span className="text-[10px] text-gray-500">
         ({schedule.enrolledStudentIds.length}/{schedule.maxStudents})
       </span>
+      {studentMap.size > 0 && schedule.enrolledStudentIds.length > 0 && (() => {
+        const names = schedule.enrolledStudentIds
+          .map((id) => studentMap.get(id))
+          .filter((n): n is string => !!n);
+        const display = names.slice(0, 2);
+        const rest = names.length - 2;
+        return (
+          <span className="text-[9px] text-gray-500 text-center leading-tight">
+            {display.join("、")}{rest > 0 && ` 他${rest}名`}
+          </span>
+        );
+      })()}
       {hasCustomTime && (
         <span className="text-[10px] text-gray-500">
           {schedule.startTime}–{schedule.endTime}
         </span>
       )}
-    </Link>
+    </button>
+  );
+}
+
+function ScheduleDetailModal({
+  schedule,
+  studentMap,
+  onClose,
+}: {
+  schedule: Schedule;
+  studentMap: Map<string, string>;
+  onClose: () => void;
+}) {
+  const enrolledNames = schedule.enrolledStudentIds
+    .map((id) => studentMap.get(id))
+    .filter((n): n is string => !!n);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="border-b border-gray-200 px-5 py-4">
+          <h3 className="text-lg font-bold text-gray-900">
+            {schedule.label}
+          </h3>
+          <p className="text-sm text-gray-600 mt-1">
+            {DAY_OF_WEEK_LABELS[schedule.dayOfWeek]}曜
+            {schedule.startTime}–{schedule.endTime} ／ {schedule.room} ／ {schedule.teacherName}
+          </p>
+        </div>
+
+        <div className="px-5 py-4">
+          <h4 className="text-sm font-semibold text-gray-900 mb-2">
+            受講生徒（{enrolledNames.length}/{schedule.maxStudents}名）
+          </h4>
+          {enrolledNames.length === 0 ? (
+            <p className="text-sm text-gray-500">登録生徒なし</p>
+          ) : (
+            <ul className="space-y-1">
+              {enrolledNames.map((name, i) => (
+                <li key={i} className="text-sm text-gray-800 flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-xs flex items-center justify-center font-medium">
+                    {i + 1}
+                  </span>
+                  {name}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="border-t border-gray-200 px-5 py-3 flex justify-between">
+          <Link
+            href={`/schedule/${schedule.id}/edit?dayOfWeek=${schedule.dayOfWeek}`}
+            className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+          >
+            編集する →
+          </Link>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-sm text-gray-600 hover:text-gray-800 font-medium"
+          >
+            閉じる
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

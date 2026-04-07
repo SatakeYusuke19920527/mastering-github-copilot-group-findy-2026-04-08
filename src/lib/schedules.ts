@@ -83,3 +83,11 @@ export async function deleteSchedule(id: string, dayOfWeek: number): Promise<boo
     return false;
   }
 }
+
+export async function listSchedulesByStudentId(studentId: string): Promise<Schedule[]> {
+  const query = `SELECT * FROM c WHERE ARRAY_CONTAINS(c.enrolledStudentIds, @studentId) ORDER BY c.dayOfWeek, c.period`;
+  const { resources } = await container().items
+    .query({ query, parameters: [{ name: "@studentId", value: studentId }] })
+    .fetchAll();
+  return resources as Schedule[];
+}

@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import type { Schedule, ScheduleCreateInput, GradeLevel, Room } from "@/lib/types";
+import type { Schedule, ScheduleCreateInput, GradeLevel, Room, Student } from "@/lib/types";
 import { GRADE_LABELS, DAY_OF_WEEK_LABELS, ROOMS, PERIODS } from "@/lib/types";
 
 const ALL_GRADES = Object.keys(GRADE_LABELS) as GradeLevel[];
@@ -16,12 +16,23 @@ interface ScheduleFormProps {
     period?: number;
     room?: string;
   };
+  students?: Student[];
 }
 
-export function ScheduleForm({ schedule, mode, defaultValues }: ScheduleFormProps) {
+export function ScheduleForm({ schedule, mode, defaultValues, students }: ScheduleFormProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>(
+    schedule?.enrolledStudentIds ?? []
+  );
+  const [gradeFilter, setGradeFilter] = useState<string>(
+    schedule?.gradeLevel ?? ""
+  );
+  const [nameFilter, setNameFilter] = useState("");
+  const [currentMaxStudents, setCurrentMaxStudents] = useState(
+    schedule?.maxStudents ?? 20
+  );
   const startTimeRef = useRef<HTMLInputElement>(null);
   const endTimeRef = useRef<HTMLInputElement>(null);
 
@@ -65,7 +76,7 @@ export function ScheduleForm({ schedule, mode, defaultValues }: ScheduleFormProp
       teacherName: formData.get("teacherName") as string,
       room: formData.get("room") as Room,
       maxStudents: Number(formData.get("maxStudents")),
-      enrolledStudentIds: schedule?.enrolledStudentIds ?? [],
+      enrolledStudentIds: selectedStudentIds,
       isActive: formData.get("isActive") === "on",
       isSpringCourse: formData.get("isSpringCourse") === "on",
       isImportant: formData.get("isImportant") === "on",
@@ -198,6 +209,7 @@ export function ScheduleForm({ schedule, mode, defaultValues }: ScheduleFormProp
             <select
               name="gradeLevel"
               defaultValue={schedule?.gradeLevel ?? "junior-1"}
+              onChange={(e) => setGradeFilter(e.target.value)}
               className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900"
             >
               {ALL_GRADES.map((g) => (
@@ -252,6 +264,7 @@ export function ScheduleForm({ schedule, mode, defaultValues }: ScheduleFormProp
               min={1}
               defaultValue={schedule?.maxStudents ?? 20}
               required
+              onChange={(e) => setCurrentMaxStudents(Number(e.target.value) || 0)}
               className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900"
             />
           </label>
@@ -287,6 +300,93 @@ export function ScheduleForm({ schedule, mode, defaultValues }: ScheduleFormProp
           </label>
         </div>
       </fieldset>
+
+      {students && students.length > 0 && (
+        <fieldset className="space-y-4">
+          <legend className="text-lg font-semibold text-gray-900">
+            登録生徒
+          </legend>
+
+          <div className="grid grid-cols-2 gap-4">
+            <label className="block">
+              <span className="text-sm font-medium text-gray-900">学年で絞り込み</span>
+              <select
+                value={gradeFilter}
+                onChange={(e) => setGradeFilter(e.target.value)}
+                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900"
+              >
+                <option value="">すべての学年</option>
+                {ALL_GRADES.map((g) => (
+                  <option key={g} value={g}>
+                    {GRADE_LABELS[g]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-sm font-medium text-gray-900">名前で検索</span>
+              <input
+                type="text"
+                value={nameFilter}
+                onChange={(e) => setNameFilter(e.target.value)}
+                placeholder="氏名を入力"
+                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900"
+              />
+            </label>
+          </div>
+
+          {(() => {
+            const filtered = students.filter((s) => {
+              if (gradeFilter && s.gradeLevel !== gradeFilter) return false;
+              if (nameFilter) {
+                const q = nameFilter.toLowerCase();
+                const fullName = `${s.lastName}${s.firstName}`;
+                if (!fullName.toLowerCase().includes(q)) return false;
+              }
+              return true;
+            });
+
+            return (
+              <>
+                <div className="text-sm text-gray-700">
+                  選択中: {selectedStudentIds.length}名 / 定員 {currentMaxStudents}名
+                </div>
+                <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-md p-3 space-y-1">
+                  {filtered.length === 0 ? (
+                    <p className="text-sm text-gray-500">該当する生徒がいません</p>
+                  ) : (
+                    filtered.map((s) => {
+                      const checked = selectedStudentIds.includes(s.id);
+                      return (
+                        <label key={s.id} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              setSelectedStudentIds((prev) =>
+                                e.target.checked
+                                  ? [...prev, s.id]
+                                  : prev.filter((id) => id !== s.id)
+                              );
+                            }}
+                            className="rounded border-gray-300"
+                          />
+                          <span className="text-gray-900">
+                            {s.lastName} {s.firstName}
+                          </span>
+                          <span className="text-gray-500">
+                            ({GRADE_LABELS[s.gradeLevel]})
+                          </span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+              </>
+            );
+          })()}
+        </fieldset>
+      )}
 
       <div className="flex gap-3">
         <button
