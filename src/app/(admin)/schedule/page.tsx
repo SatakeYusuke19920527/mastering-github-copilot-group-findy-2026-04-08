@@ -1,14 +1,16 @@
 import Link from "next/link";
 import { listSchedules } from "@/lib/schedules";
 import { listStudents } from "@/lib/students";
+import { listAbsences } from "@/lib/absences";
 import { ScheduleTimetable } from "@/components/schedule-timetable";
 
 export const dynamic = "force-dynamic";
 
 export default async function SchedulePage() {
-  const [schedules, students] = await Promise.all([
+  const [schedules, students, rescheduledAbsences] = await Promise.all([
     listSchedules(),
     listStudents({ enrollmentStatus: "enrolled" }),
+    listAbsences({ status: "rescheduled" }),
   ]);
 
   return (
@@ -24,7 +26,7 @@ export default async function SchedulePage() {
           ＋ 新規登録
         </Link>
       </div>
-      <ScheduleTimetable schedules={schedules} students={students} />
+      <ScheduleTimetable schedules={schedules} students={students} rescheduledAbsences={rescheduledAbsences} />
     </div>
   );
 }
